@@ -1,21 +1,27 @@
 const std = @import("std");
 const Tokenizer = @import("tokenizer.zig");
+const Parser = @import("parser.zig");
+const AST = @import("AST.zig");
 
 pub fn main() !void {
-    // const t = "return 1;";
-    var tokenizer = Tokenizer.Tokenizer.init("");
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
+
+    const input = "1+3+2";
+    std.debug.print("input: {s}\n", .{input});
+    var tokenizer = Tokenizer.Tokenizer.init(input);
     const tokens = tokenizer.tokenize(allocator);
+
+    std.debug.print("Tokens ({}): \n", .{tokens.items.len});
     for (tokens.items) |token| {
         std.debug.print("{s}:{s}\n", .{ tokenizer.buffer[token.pos.start..token.pos.end], @tagName(token.type) });
     }
-    std.debug.print("{}\n", .{tokens.items.len});
-}
 
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
+    std.debug.print("\nAST:\n", .{});
+    var parser = Parser.Parser.init(allocator, tokens, input);
+    if (parser.parse()) |tree| {
+        try AST.print_tree(tree);
+    } else |err| {
+        std.debug.print("{s}\n", .{@errorName(err)});
+    }
 }

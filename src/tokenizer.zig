@@ -19,6 +19,7 @@ pub const TokenType = enum {
     plus,
     minus,
     asterisk,
+    slash,
     paren_left,
     paren_right,
     curly_br_left,
@@ -45,6 +46,7 @@ pub fn lexeme(token: TokenType) [:0]const u8 {
         .plus => "+",
         .minus => "-",
         .asterisk => "*",
+        .slash => "/",
         .paren_left => "(",
         .paren_right => ")",
         .curly_br_left => "{",
@@ -66,6 +68,7 @@ pub const token_strings = std.StaticStringMap(TokenType).initComptime(.{
     .{ lexeme(.plus), .plus },
     .{ lexeme(.minus), .minus },
     .{ lexeme(.asterisk), .asterisk },
+    .{ lexeme(.slash), .slash },
     .{ lexeme(.paren_left), .paren_left },
     .{ lexeme(.paren_right), .paren_right },
     .{ lexeme(.curly_br_left), .curly_br_left },
@@ -225,9 +228,9 @@ fn test_tokenize(str: [:0]const u8, expected: []const TokenType) !void {
     var tokenizer = Tokenizer.init(str);
     var tokens = tokenizer.tokenize(std.testing.allocator);
     defer tokens.deinit();
-    for (tokens.items) |token|
-        std.debug.print("{s}:{s}, ", .{ str[token.pos.start..token.pos.end], @tagName(token.type) });
-    std.debug.print("\n", .{});
+    // for (tokens.items) |token|
+    //     std.debug.print("{s}:{s}, ", .{ str[token.pos.start..token.pos.end], @tagName(token.type) });
+    // std.debug.print("\n", .{});
     _ = tokens.pop();
     try std.testing.expect(tokens_equal(tokens, expected));
 }
