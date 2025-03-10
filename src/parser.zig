@@ -4,14 +4,19 @@ const AST = @import("AST.zig");
 const Token = Tokenizer.Token;
 const TokenType = Tokenizer.TokenType;
 
-// fun main(): void {
-//  return 1;
-// }
-
-// while the tokenizer just represents different symbols by their positions in the source code, the parser will include the symbols themselves.
-// this will make preserving the tree by itself easier, making the source code no longer need to stay in memory.
-
-pub const ParseError = error{unexpected_token};
+pub const ParseError = error{ unexpected_token, allocation_error, other };
+pub const ParseErrorKind = enum {
+    unexpected_token,
+    expected_and_found,
+    allocation_error,
+    other,
+};
+const ErrorInfo = union(ParseErrorKind) {
+    unexpected_token: struct { expected: Tokenizer.TokenType, found: Token },
+    expected_and_found: struct { expected: [:0]const u8, found: Token },
+    allocation_error: i0,
+    other: [:0]const u8,
+};
 
 pub const Parser = struct {
     tokens: std.ArrayList(Token),
@@ -19,6 +24,7 @@ pub const Parser = struct {
     token: Token,
     index: usize,
     allocator: std.mem.Allocator,
+    error_info: ErrorInfo,
 
     pub fn init(allocator: std.mem.Allocator, input: std.ArrayList(Token), source_code: [:0]const u8) Parser {
         return Parser{
@@ -27,17 +33,11 @@ pub const Parser = struct {
             .source_code = source_code,
             .token = input.items[0],
             .index = 0,
+            .error_info = .{ .allocation_error = 0 },
         };
     }
 
-    // TODO: move this to AST.zig
-    fn alloc_node(self: *Parser, node: AST.Node) !*AST.Node {
-        const mem = try self.allocator.create(AST.Node);
-        mem.* = node;
-        return mem;
-    }
-
-    fn next_token(self: *Parser) bool {
+    fn nextToken(self: *Parser) bool {
         self.index += 1;
 
         if (self.index < self.tokens.items.len) {
@@ -48,13 +48,23 @@ pub const Parser = struct {
 
     fn accept(self: *Parser, token: TokenType) bool {
         if (self.token.type == token) {
-            return next_token(self);
+            return nextToken(self);
+        } else return false;
+    }
+
+    fn acceptIdentifier(self: *Parser, identifier: []const u8) bool {
+        const expected = self.source_code[self.token.pos.start..self.token.pos.end];
+
+        std.debug.print("{} {}", .{ expected.len, identifier.len });
+        if (self.token.type == .identifier and std.mem.eql(u8, expected, identifier)) {
+            return nextToken(self);
         } else return false;
     }
 
     fn expect(self: *Parser, token: TokenType) !void {
         if (accept(self, token))
             return;
+        self.error_info = ErrorInfo{ .unexpected_token = .{ .expected = token, .found = self.token } };
         return error.unexpected_token;
     }
 
@@ -68,51 +78,196 @@ pub const Parser = struct {
             const token_text = self.source_code[past_tkn.start..past_tkn.end];
             return AST.Node{ .identifier = .{ .value = @constCast(token_text) } };
         } else if (self.accept(.paren_left)) {
-            // const expr = try self.expression();
+            const expr = try self.expression();
             try self.expect(.paren_right);
+            return expr;
+        } else if (self.accept(.bang)) {
+            const unary_node = AST.Node{
+                .unary_op = .{
+                    .op = .bang,
+                    .operand = try AST.allocNode(self.allocator, try self.expression()),
+                },
+            };
+            return unary_node;
         }
 
+        self.error_info = ErrorInfo{ .expected_and_found = .{ .expected = "expression", .found = self.token } };
         return error.unexpected_token;
     }
 
-    fn term(self: *Parser) !AST.Node {
+    fn term(self: *Parser) ParseError!AST.Node {
         var left: AST.Node = try self.factor();
 
         while (self.token.type == .asterisk or self.token.type == .slash) {
             const op_type = self.token.type;
-            _ = self.next_token();
+            _ = self.nextToken();
             const right = try self.factor();
 
             left = AST.Node{ .bin_op = .{
                 .op = op_type,
-                .left = try self.alloc_node(left),
-                .right = try self.alloc_node(right),
+                .left = try AST.allocNode(self.allocator, left),
+                .right = try AST.allocNode(self.allocator, right),
             } };
         }
 
         return left;
     }
 
-    fn expression(self: *Parser) !AST.Node {
-        var left = try self.term();
+    fn comparison(self: *Parser) ParseError!AST.Node {
+        var left: AST.Node = try self.term();
 
-        while (self.token.type == .plus or self.token.type == .minus) {
+        while (self.token.type == .equal_equal or
+            self.token.type == .bang_equal or
+            self.token.type == .greater_than or
+            self.token.type == .greater_than_or_eq or
+            self.token.type == .lesser_than or
+            self.token.type == .lesser_than_or_eq)
+        {
             const op_type = self.token.type;
-            _ = self.next_token();
+            _ = self.nextToken();
             const right = try self.term();
 
             left = AST.Node{ .bin_op = .{
                 .op = op_type,
-                .left = try self.alloc_node(left),
-                .right = try self.alloc_node(right),
+                .left = try AST.allocNode(self.allocator, left),
+                .right = try AST.allocNode(self.allocator, right),
             } };
         }
 
         return left;
     }
 
+    fn expression(self: *Parser) ParseError!AST.Node {
+        var left = try self.comparison();
+
+        while (self.token.type == .plus or self.token.type == .minus) {
+            const op_type = self.token.type;
+            _ = self.nextToken();
+            const right = try self.comparison();
+
+            left = AST.Node{ .bin_op = .{
+                .op = op_type,
+                .left = try AST.allocNode(self.allocator, left),
+                .right = try AST.allocNode(self.allocator, right),
+            } };
+        }
+
+        return left;
+    }
+
+    fn variableDeclaration(self: *Parser) ParseError!AST.Node {
+        const var_name = self.source_code[self.token.pos.start..self.token.pos.end];
+        const id = AST.Node{ .identifier = .{ .value = var_name } };
+        try self.expect(.identifier);
+        var var_node = AST.Node{ .variable_declaration = .{
+            .id = try AST.allocNode(self.allocator, id),
+            .init = null,
+        } };
+        errdefer AST.deallocTree(self.allocator, var_node);
+
+        if (self.accept(.equal)) {
+            const expr = try self.expression();
+            var_node.variable_declaration.init = try AST.allocNode(self.allocator, expr);
+            errdefer AST.deallocTree(self.allocator, var_node);
+        }
+        return var_node;
+    }
+
+    fn statement(self: *Parser) ParseError!AST.Node {
+        var statement_node = AST.Node{ .empty_statement = 0 };
+        if (self.accept(.keyword_var)) {
+            statement_node = try self.variableDeclaration();
+        } else if (self.accept(.keyword_fun)) {
+            statement_node = try self.functionDeclaration();
+        } else {
+            self.error_info = ErrorInfo{ .expected_and_found = .{ .expected = "statement", .found = self.token } };
+            return error.unexpected_token;
+        }
+
+        return statement_node;
+    }
+
+    fn block(self: *Parser) ParseError!AST.Node {
+        var arr = std.ArrayList(*AST.Node).init(self.allocator);
+        try self.expect(.curly_br_left);
+        while (self.token.type != .curly_br_right) {
+            errdefer AST.deallocNodeList(self.allocator, arr);
+            if (arr.append(try AST.allocNode(self.allocator, try self.statement()))) |_| {} else |_| {
+                AST.deallocNodeList(self.allocator, arr);
+                return error.allocation_error;
+            }
+
+            try self.expect(.semicolon);
+        }
+        errdefer AST.deallocNodeList(self.allocator, arr);
+
+        try self.expect(.curly_br_right);
+
+        const block_node = AST.Node{ .block = arr };
+        return block_node;
+    }
+
+    fn functionDeclaration(self: *Parser) ParseError!AST.Node {
+        const fun_name = self.source_code[self.token.pos.start..self.token.pos.end];
+        const id = try AST.allocNode(self.allocator, AST.Node{ .identifier = .{ .value = fun_name } });
+        errdefer self.allocator.destroy(id);
+
+        try self.expect(.identifier);
+        const fun_block = try AST.allocNode(self.allocator, try self.block());
+        errdefer AST.deallocTree(fun_block);
+
+        const fun_node = AST.Node{ .function_declaration = .{ .id = id, .body = fun_block } };
+        return fun_node;
+    }
+
     pub fn parse(self: *Parser) !AST.Node {
-        const expr = try self.expression();
+        const expr = try self.statement();
         return expr;
     }
 };
+
+pub fn printSourceLocation(parser: Parser, position: Tokenizer.Pos) void {
+    var start_pos = position.start;
+    var end_pos = position.end;
+    // TODO: add line nums
+    while (parser.source_code[start_pos] != '\n' and start_pos > 0) start_pos -= 1;
+    while (parser.source_code[end_pos] != '\n' and end_pos < parser.source_code.len) end_pos += 1;
+    std.debug.print("{s}\n", .{parser.source_code[start_pos + 1 .. end_pos]});
+
+    const col = position.start - start_pos - 1;
+    if (col >= 1024) return;
+    var padding: [1024]u8 = undefined;
+    @memset(&padding, ' ');
+
+    if (position.end - position.start > 1) {
+        var range: [128]u8 = undefined;
+        @memset(&range, '-');
+        std.debug.print("^{s}^\n", .{range[0 .. position.end - position.start - 2]});
+    } else {
+        std.debug.print("{s}^\n", .{padding[0..col]});
+    }
+}
+
+pub fn printError(parser: Parser, err: ParseError) void {
+    switch (parser.error_info) {
+        .unexpected_token => {
+            const info = parser.error_info.unexpected_token;
+            std.debug.print("expected {s}, found {s}\n", .{ @tagName(info.expected), @tagName(info.found.type) });
+            printSourceLocation(parser, info.found.pos);
+        },
+        .other => {
+            std.debug.print("{s} {s}\n", .{ @errorName(err), parser.error_info.other });
+        },
+        .allocation_error => {
+            std.debug.print("{s} alloc error\n", .{@errorName(err)});
+        },
+        .expected_and_found => {
+            const info = parser.error_info.expected_and_found;
+            std.log.err("expected {s}, found {s}\n", .{ info.expected, @tagName(info.found.type) });
+            printSourceLocation(parser, info.found.pos);
+        },
+        // else => {
+        //     std.debug.print("{s}\n", .{@errorName(err)});
+        // },
+    }
+}
