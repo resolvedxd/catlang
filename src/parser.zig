@@ -139,6 +139,7 @@ pub const Parser = struct {
 
     fn expression(self: *Parser) ParseError!AST.Node {
         var left = try self.comparison();
+        errdefer AST.deallocTree(self.allocator, left);
 
         while (self.token.type == .plus or self.token.type == .minus) {
             const op_type = self.token.type;
