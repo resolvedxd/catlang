@@ -6,6 +6,7 @@ const Utils = @import("utils.zig");
 const Node = AST.Node;
 
 pub const std_options: std.Options = .{ .logFn = Utils.coloredLog };
+// TODO: better errors when missing a closing bracket
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -14,6 +15,10 @@ pub fn main() !void {
     const input =
         \\fun test {  
         \\ var a = 1+2*3;
+        \\ if (a == 4) {
+        \\  var i = 0;
+        \\  var asd = 123;
+        \\ } else {}
         \\}
     ;
     std.debug.print("input: \n{s}\n", .{input});

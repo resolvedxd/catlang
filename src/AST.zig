@@ -71,9 +71,20 @@ pub fn printTree(node: Node) !void {
             try printTree(node.function_declaration.body.*);
             std.debug.print("{s})", .{"}"});
         },
+        .if_expr => {
+            std.debug.print("({s} ", .{@tagName(node)});
+            try printTree(node.if_expr.condition.*);
+            std.debug.print(" then=>{s}\n", .{"{"});
+            try printTree(node.if_expr.then_branch.*);
+            std.debug.print("{s}", .{"}"});
+            if (node.if_expr.else_branch) |else_branch| {
+                std.debug.print(" else=>{s}\n", .{"{"});
+                try printTree(else_branch.*);
+                std.debug.print("{s}", .{"}"});
+            }
+        },
         .block => {
             for (node.block.items) |nd| {
-                std.debug.print("\t", .{});
                 try printTree(nd.*);
                 std.debug.print("\n", .{});
             }
@@ -123,9 +134,17 @@ pub fn deallocTree(allocator: std.mem.Allocator, node: Node) void {
             }
             node.block.deinit();
         },
-        .identifier => {},
-        .number_literal => {},
-        .string_literal => {},
+        .if_expr => {
+            deallocTree(allocator, node.if_expr.condition.*);
+            allocator.destroy(node.if_expr.condition);
+            deallocTree(allocator, node.if_expr.then_branch.*);
+            allocator.destroy(node.if_expr.then_branch);
+            if (node.if_expr.else_branch) |else_branch| {
+                deallocTree(allocator, else_branch.*);
+                allocator.destroy(else_branch);
+            }
+        },
+        .identifier, .number_literal, .string_literal, .empty_statement => {},
         else => {
             std.log.err("!!!unimplemented tree deallocation for node type: {s}\n", .{@tagName(node)});
         },

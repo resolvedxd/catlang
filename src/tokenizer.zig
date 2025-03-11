@@ -7,6 +7,7 @@ pub const TokenType = enum {
     string_literal,
     keyword_return,
     keyword_if,
+    keyword_else,
     keyword_while,
     keyword_for,
     keyword_var,
@@ -88,6 +89,7 @@ pub const Token = struct {
 pub const keywords = std.StaticStringMap(TokenType).initComptime(.{
     .{ "return", .keyword_return },
     .{ "if", .keyword_if },
+    .{ "else", .keyword_else },
     .{ "while", .keyword_while },
     .{ "for", .keyword_for },
     .{ "var", .keyword_var },

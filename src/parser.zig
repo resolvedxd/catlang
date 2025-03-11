@@ -174,12 +174,45 @@ pub const Parser = struct {
         return var_node;
     }
 
+    fn ifStatement(self: *Parser) ParseError!AST.Node {
+        // HACK: the first two errdefers that free memory segfault if the error occured after the 3rd errdefer which
+        // frees the whole node
+        var has_else = false;
+
+        try self.expect(.paren_left);
+        const condition = try self.expression();
+        errdefer if (!has_else) AST.deallocTree(self.allocator, condition);
+        try self.expect(.paren_right);
+
+        const then_branch = try self.block();
+        errdefer if (!has_else) AST.deallocTree(self.allocator, then_branch);
+        var node = AST.Node{
+            .if_expr = .{
+                .condition = try AST.allocNode(self.allocator, condition),
+                .then_branch = try AST.allocNode(self.allocator, then_branch),
+                .else_branch = null,
+            },
+        };
+
+        if (self.accept(.keyword_else)) {
+            has_else = true;
+            errdefer AST.deallocTree(self.allocator, node);
+            const else_branch = try self.block();
+            node.if_expr.else_branch = try AST.allocNode(self.allocator, else_branch);
+        }
+        return node;
+    }
+
     fn statement(self: *Parser) ParseError!AST.Node {
         var statement_node = AST.Node{ .empty_statement = 0 };
+        errdefer AST.deallocTree(self.allocator, statement_node);
         if (self.accept(.keyword_var)) {
             statement_node = try self.variableDeclaration();
+            try self.expect(.semicolon);
         } else if (self.accept(.keyword_fun)) {
             statement_node = try self.functionDeclaration();
+        } else if (self.accept(.keyword_if)) {
+            statement_node = try self.ifStatement();
         } else {
             self.error_info = ErrorInfo{ .expected_and_found = .{ .expected = "statement", .found = self.token } };
             return error.unexpected_token;
@@ -193,12 +226,11 @@ pub const Parser = struct {
         try self.expect(.curly_br_left);
         while (self.token.type != .curly_br_right) {
             errdefer AST.deallocNodeList(self.allocator, arr);
-            if (arr.append(try AST.allocNode(self.allocator, try self.statement()))) |_| {} else |_| {
+            const stmt = try self.statement();
+            if (arr.append(try AST.allocNode(self.allocator, stmt))) |_| {} else |_| {
                 AST.deallocNodeList(self.allocator, arr);
                 return error.allocation_error;
             }
-
-            try self.expect(.semicolon);
         }
         errdefer AST.deallocNodeList(self.allocator, arr);
 
@@ -227,34 +259,67 @@ pub const Parser = struct {
     }
 };
 
-pub fn printSourceLocation(parser: Parser, position: Tokenizer.Pos) void {
+const lineAndCol = struct {
+    col: i32,
+    line: i32,
+};
+
+pub fn printSourceLocation(parser: Parser, position: Tokenizer.Pos) lineAndCol {
     var start_pos = position.start;
     var end_pos = position.end;
-    // TODO: add line nums
-    while (parser.source_code[start_pos] != '\n' and start_pos > 0) start_pos -= 1;
-    while (parser.source_code[end_pos] != '\n' and end_pos < parser.source_code.len) end_pos += 1;
-    std.debug.print("{s}\n", .{parser.source_code[start_pos + 1 .. end_pos]});
+    var total_lines: i32 = 0;
+    var lines_to_start: i32 = 0;
+    var line_col: i32 = 0;
+    var i: usize = parser.source_code.len;
+    var found_col = false;
+    while (i > 0) {
+        const ch = parser.source_code[i];
+        if (start_pos != position.start and ch == '\n' and position.end != end_pos) {
+            end_pos = i;
+        }
+        if (start_pos > i and ch == '\n' and position.start == start_pos) {
+            start_pos = i;
+            lines_to_start = total_lines;
+        }
+        if (position.start != start_pos and !found_col) {
+            line_col += 1;
+            found_col = true;
+        }
+        if (ch == '\n') total_lines += 1;
+        i -= 1;
+    }
+    const line_and_col = lineAndCol{ .line = total_lines - lines_to_start + 1, .col = line_col };
+
+    var buf: [24]u8 = undefined;
+    var line_number: []u8 = undefined;
+    if (std.fmt.bufPrint(&buf, "{}: ", .{total_lines - lines_to_start + 1})) |a| {
+        line_number = a;
+    } else |_| {
+        @memset(&buf, 0);
+    }
+    std.debug.print("{s}{s}\n", .{ line_number, parser.source_code[start_pos + 1 .. end_pos] });
 
     const col = position.start - start_pos - 1;
-    if (col >= 1024) return;
+    if (col >= 1024) return line_and_col;
     var padding: [1024]u8 = undefined;
     @memset(&padding, ' ');
 
     if (position.end - position.start > 1) {
         var range: [128]u8 = undefined;
         @memset(&range, '-');
-        std.debug.print("^{s}^\n", .{range[0 .. position.end - position.start - 2]});
+        std.debug.print("{s}^{s}^\n", .{ padding[0 .. col + line_number.len], range[0 .. position.end - position.start - 2] });
     } else {
-        std.debug.print("{s}^\n", .{padding[0..col]});
+        std.debug.print("{s}^\n", .{padding[0 .. col + line_number.len]});
     }
+    return line_and_col;
 }
 
 pub fn printError(parser: Parser, err: ParseError) void {
     switch (parser.error_info) {
         .unexpected_token => {
             const info = parser.error_info.unexpected_token;
-            std.debug.print("expected {s}, found {s}\n", .{ @tagName(info.expected), @tagName(info.found.type) });
-            printSourceLocation(parser, info.found.pos);
+            const line_and_col = printSourceLocation(parser, info.found.pos);
+            std.log.err("expected {s}, found {s} (line {} col {})\n", .{ @tagName(info.expected), @tagName(info.found.type), line_and_col.line, line_and_col.col });
         },
         .other => {
             std.debug.print("{s} {s}\n", .{ @errorName(err), parser.error_info.other });
@@ -264,8 +329,8 @@ pub fn printError(parser: Parser, err: ParseError) void {
         },
         .expected_and_found => {
             const info = parser.error_info.expected_and_found;
-            std.log.err("expected {s}, found {s}\n", .{ info.expected, @tagName(info.found.type) });
-            printSourceLocation(parser, info.found.pos);
+            const line_and_col = printSourceLocation(parser, info.found.pos);
+            std.log.err("expected {s}, found {s} (line {} col {})\n", .{ info.expected, @tagName(info.found.type), line_and_col.line, line_and_col.col });
         },
         // else => {
         //     std.debug.print("{s}\n", .{@errorName(err)});
