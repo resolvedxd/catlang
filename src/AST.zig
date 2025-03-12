@@ -17,6 +17,7 @@ pub const Node = union(enum) {
     variable_declaration: struct {
         id: *Node,
         init: ?*Node,
+        type: ?*Node,
     },
     block: std.ArrayList(*Node),
     function_declaration: struct {
@@ -60,6 +61,9 @@ pub fn printTree(node: Node) !void {
         },
         .variable_declaration => {
             std.debug.print("({s} {s}", .{ @tagName(node), node.variable_declaration.id.identifier.value });
+            if (node.variable_declaration.type) |type_node| {
+                std.debug.print(":{s}", .{type_node.identifier.value});
+            }
             if (node.variable_declaration.init) |init| {
                 std.debug.print("=", .{});
                 try printTree(init.*);
@@ -116,6 +120,10 @@ pub fn deallocTree(allocator: std.mem.Allocator, node: Node) void {
         .variable_declaration => {
             deallocTree(allocator, node.variable_declaration.id.*);
             allocator.destroy(node.variable_declaration.id);
+            if (node.variable_declaration.type) |type_node| {
+                deallocTree(allocator, type_node.*);
+                allocator.destroy(type_node);
+            }
             if (node.variable_declaration.init) |init| {
                 deallocTree(allocator, init.*);
                 allocator.destroy(init);

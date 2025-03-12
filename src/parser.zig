@@ -156,6 +156,20 @@ pub const Parser = struct {
         return left;
     }
 
+    fn acceptType(self: *Parser) ParseError!?AST.Node {
+        if (self.accept(.colon)) {
+            if (self.token.type == .identifier) {
+                const type_name = self.source_code[self.token.pos.start..self.token.pos.end];
+                _ = self.nextToken();
+                return AST.Node{ .identifier = .{ .value = type_name } };
+            } else {
+                self.error_info = ErrorInfo{ .expected_and_found = .{ .expected = "type name", .found = self.token } };
+                return error.unexpected_token;
+            }
+        }
+        return null;
+    }
+
     fn variableDeclaration(self: *Parser) ParseError!AST.Node {
         const var_name = self.source_code[self.token.pos.start..self.token.pos.end];
         const id = AST.Node{ .identifier = .{ .value = var_name } };
@@ -163,8 +177,14 @@ pub const Parser = struct {
         var var_node = AST.Node{ .variable_declaration = .{
             .id = try AST.allocNode(self.allocator, id),
             .init = null,
+            .type = null,
         } };
         errdefer AST.deallocTree(self.allocator, var_node);
+
+        if (try self.acceptType()) |type_node| {
+            var_node.variable_declaration.type = try AST.allocNode(self.allocator, type_node);
+            errdefer AST.deallocTree(self.allocator, var_node);
+        }
 
         if (self.accept(.equal)) {
             const expr = try self.expression();
