@@ -44,21 +44,21 @@ pub const Node = union(enum) {
     return_expr: ?*Node,
 };
 
-pub fn printTree(node: Node) !void {
+pub fn printTree(node: Node) void {
     switch (node) {
         .number_literal, .string_literal, .identifier => {
             std.debug.print("{s}", .{@tagName(node)});
         },
         .bin_op => {
             std.debug.print("({s} ", .{@tagName(node)});
-            try printTree(node.bin_op.left.*);
+            printTree(node.bin_op.left.*);
             std.debug.print("{s}", .{Tokenizer.lexeme(node.bin_op.op)});
-            try printTree(node.bin_op.right.*);
+            printTree(node.bin_op.right.*);
             std.debug.print(")", .{});
         },
         .unary_op => {
             std.debug.print("({s} {s}", .{ @tagName(node), Tokenizer.lexeme(node.unary_op.op) });
-            try printTree(node.unary_op.operand.*);
+            printTree(node.unary_op.operand.*);
             std.debug.print(")", .{});
         },
         .variable_declaration => {
@@ -68,30 +68,35 @@ pub fn printTree(node: Node) !void {
             }
             if (node.variable_declaration.init) |init| {
                 std.debug.print("=", .{});
-                try printTree(init.*);
+                printTree(init.*);
             }
             std.debug.print(")", .{});
         },
         .function_declaration => {
-            std.debug.print("({s} {s}=>{s}\n", .{ @tagName(node), node.function_declaration.id.identifier.value, "{" });
-            try printTree(node.function_declaration.body.*);
+            std.debug.print("({s} {s}(", .{ @tagName(node), node.function_declaration.id.identifier.value });
+            for (node.function_declaration.arguments.block.items) |arg| {
+                std.debug.print("{s}:{s}", .{ arg.variable_declaration.id.identifier.value, arg.variable_declaration.type.?.identifier.value });
+            }
+            std.debug.print(")=>{s}\n", .{"{"});
+
+            printTree(node.function_declaration.body.*);
             std.debug.print("{s})", .{"}"});
         },
         .if_expr => {
             std.debug.print("({s} ", .{@tagName(node)});
-            try printTree(node.if_expr.condition.*);
+            printTree(node.if_expr.condition.*);
             std.debug.print(" then=>{s}\n", .{"{"});
-            try printTree(node.if_expr.then_branch.*);
+            printTree(node.if_expr.then_branch.*);
             std.debug.print("{s}", .{"}"});
             if (node.if_expr.else_branch) |else_branch| {
                 std.debug.print(" else=>{s}\n", .{"{"});
-                try printTree(else_branch.*);
+                printTree(else_branch.*);
                 std.debug.print("{s}", .{"}"});
             }
         },
         .block => {
             for (node.block.items) |nd| {
-                try printTree(nd.*);
+                printTree(nd.*);
                 std.debug.print("\n", .{});
             }
         },

@@ -34,7 +34,7 @@ pub fn main() !void {
     var parser = Parser.Parser.init(allocator, tokens, input);
     if (parser.parse()) |tree| {
         std.debug.print("\nAST:\n", .{});
-        try AST.printTree(tree);
+        AST.printTree(tree);
         AST.deallocTree(allocator, tree);
     } else |err| {
         Parser.printError(parser, err);
