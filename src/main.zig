@@ -13,8 +13,8 @@ pub fn main() !void {
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
     const input =
-        \\fun test {  
-        \\ var a = 1+2*3;
+        \\fun test(a: i32) {  
+        \\ var a: test = 1+2*3;
         \\ if (a == 4) {
         \\  var i = 0;
         \\  var asd = 123;

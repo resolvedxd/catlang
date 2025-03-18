@@ -23,6 +23,8 @@ pub const Node = union(enum) {
     function_declaration: struct {
         id: *Node,
         body: *Node,
+        arguments: *Node,
+        return_type: ?*Node,
     },
     if_expr: struct {
         condition: *Node,
@@ -112,44 +114,35 @@ pub fn allocNode(allocator: std.mem.Allocator, node: Node) !*Node {
 pub fn deallocTree(allocator: std.mem.Allocator, node: Node) void {
     switch (node) {
         .bin_op => {
-            deallocTree(allocator, node.bin_op.left.*);
-            deallocTree(allocator, node.bin_op.right.*);
-            allocator.destroy(node.bin_op.left);
-            allocator.destroy(node.bin_op.right);
+            deallocTreePtr(allocator, node.bin_op.left);
+            deallocTreePtr(allocator, node.bin_op.right);
         },
         .variable_declaration => {
-            deallocTree(allocator, node.variable_declaration.id.*);
-            allocator.destroy(node.variable_declaration.id);
+            deallocTreePtr(allocator, node.variable_declaration.id);
             if (node.variable_declaration.type) |type_node| {
-                deallocTree(allocator, type_node.*);
-                allocator.destroy(type_node);
+                deallocTreePtr(allocator, type_node);
             }
             if (node.variable_declaration.init) |init| {
-                deallocTree(allocator, init.*);
-                allocator.destroy(init);
+                deallocTreePtr(allocator, init);
             }
         },
         .function_declaration => {
-            deallocTree(allocator, node.function_declaration.id.*);
-            allocator.destroy(node.function_declaration.id);
-            deallocTree(allocator, node.function_declaration.body.*);
-            allocator.destroy(node.function_declaration.body);
+            deallocTreePtr(allocator, node.function_declaration.id);
+            deallocTreePtr(allocator, node.function_declaration.body);
+            deallocTreePtr(allocator, node.function_declaration.arguments);
+            if (node.function_declaration.return_type) |ret| deallocTreePtr(allocator, ret);
         },
         .block => {
             for (node.block.items) |nd| {
-                deallocTree(allocator, nd.*);
-                allocator.destroy(nd);
+                deallocTreePtr(allocator, nd);
             }
             node.block.deinit();
         },
         .if_expr => {
-            deallocTree(allocator, node.if_expr.condition.*);
-            allocator.destroy(node.if_expr.condition);
-            deallocTree(allocator, node.if_expr.then_branch.*);
-            allocator.destroy(node.if_expr.then_branch);
+            deallocTreePtr(allocator, node.if_expr.condition);
+            deallocTreePtr(allocator, node.if_expr.then_branch);
             if (node.if_expr.else_branch) |else_branch| {
-                deallocTree(allocator, else_branch.*);
-                allocator.destroy(else_branch);
+                deallocTreePtr(allocator, else_branch);
             }
         },
         .identifier, .number_literal, .string_literal, .empty_statement => {},
@@ -159,11 +152,14 @@ pub fn deallocTree(allocator: std.mem.Allocator, node: Node) void {
     }
 }
 
+pub fn deallocTreePtr(allocator: std.mem.Allocator, node: *Node) void {
+    deallocTree(allocator, node.*);
+    allocator.destroy(node);
+}
+
 pub fn deallocNodeList(allocator: std.mem.Allocator, list: std.ArrayList(*Node)) void {
-    for (list.items) |node| {
-        deallocTree(allocator, node.*);
-        allocator.destroy(node);
-    }
+    for (list.items) |node|
+        deallocTreePtr(allocator, node);
 
     list.deinit();
 }

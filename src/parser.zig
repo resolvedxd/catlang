@@ -266,10 +266,47 @@ pub const Parser = struct {
         errdefer self.allocator.destroy(id);
 
         try self.expect(.identifier);
-        const fun_block = try AST.allocNode(self.allocator, try self.block());
-        errdefer AST.deallocTree(fun_block);
 
-        const fun_node = AST.Node{ .function_declaration = .{ .id = id, .body = fun_block } };
+        var arguments = std.ArrayList(*AST.Node).init(self.allocator);
+        errdefer AST.deallocNodeList(self.allocator, arguments);
+
+        // arguments
+        try self.expect(.paren_left);
+        var had_comma = true;
+        while (self.token.type != .paren_right) {
+            if (!had_comma) return error.unexpected_token;
+
+            const arg = try self.variableDeclaration();
+            errdefer AST.deallocTree(self.allocator, arg);
+            arguments.append(try AST.allocNode(self.allocator, arg)) catch {
+                return error.allocation_error;
+            };
+            errdefer AST.deallocNodeList(self.allocator, arguments);
+            had_comma = self.accept(.comma);
+        }
+        try self.expect(.paren_right);
+
+        var return_type_node: ?*AST.Node = null;
+        if (self.accept(.colon)) {
+            const return_type = self.source_code[self.token.pos.start..self.token.pos.end];
+            return_type_node = try AST.allocNode(self.allocator, AST.Node{ .identifier = .{ .value = return_type } });
+            errdefer AST.deallocTreePtr(self.allocator, return_type_node.?);
+            try self.expect(.identifier);
+        }
+        errdefer if (return_type_node) |ret| AST.deallocTreePtr(self.allocator, ret);
+
+        const fun_block = try AST.allocNode(self.allocator, try self.block());
+        errdefer AST.deallocTreePtr(self.allocator, fun_block);
+
+        const args_node: *AST.Node = try AST.allocNode(self.allocator, AST.Node{ .block = arguments });
+        errdefer AST.deallocTreePtr(self.allocator, args_node);
+
+        const fun_node = AST.Node{ .function_declaration = .{
+            .id = id,
+            .body = fun_block,
+            .arguments = args_node,
+            .return_type = return_type_node,
+        } };
         return fun_node;
     }
 
@@ -292,14 +329,16 @@ pub fn printSourceLocation(parser: Parser, position: Tokenizer.Pos) lineAndCol {
     var line_col: i32 = 0;
     var i: usize = parser.source_code.len;
     var found_col = false;
+    var found_lines_to_start = false;
     while (i > 0) {
         const ch = parser.source_code[i];
         if (start_pos != position.start and ch == '\n' and position.end != end_pos) {
             end_pos = i;
         }
-        if (start_pos > i and ch == '\n' and position.start == start_pos) {
+        if (start_pos >= i and ch == '\n' and position.start == start_pos) {
             start_pos = i;
             lines_to_start = total_lines;
+            found_lines_to_start = true;
         }
         if (position.start != start_pos and !found_col) {
             line_col += 1;
@@ -307,6 +346,12 @@ pub fn printSourceLocation(parser: Parser, position: Tokenizer.Pos) lineAndCol {
         }
         if (ch == '\n') total_lines += 1;
         i -= 1;
+    }
+    // HACK: with the current way of finding which way the token is on, if its on the first line it wont be found
+    if (!found_lines_to_start) {
+        lines_to_start = total_lines;
+        line_col = @intCast(position.start);
+        start_pos = 0;
     }
     const line_and_col = lineAndCol{ .line = total_lines - lines_to_start + 1, .col = line_col };
 
@@ -317,9 +362,9 @@ pub fn printSourceLocation(parser: Parser, position: Tokenizer.Pos) lineAndCol {
     } else |_| {
         @memset(&buf, 0);
     }
-    std.debug.print("{s}{s}\n", .{ line_number, parser.source_code[start_pos + 1 .. end_pos] });
+    std.debug.print("{s}{s} \n", .{ line_number, parser.source_code[start_pos..end_pos] });
 
-    const col = position.start - start_pos - 1;
+    const col = position.start - start_pos;
     if (col >= 1024) return line_and_col;
     var padding: [1024]u8 = undefined;
     @memset(&padding, ' ');
