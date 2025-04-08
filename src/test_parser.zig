@@ -72,9 +72,10 @@ test "statement" {
                     .right = try AST.allocNode(allocator, Node{ .number_literal = .{ .value = "4" } }),
                 },
             }),
+            .type = try AST.allocNode(allocator, Node{ .identifier = .{ .value = "i32" } }),
         },
     };
-    const stmt = try testParse(allocator, "var test_stmt = 1+2*3+4;", expected_tree);
+    const stmt = try testParse(allocator, "var test_stmt: i32 = 1+2*3+4;", expected_tree);
     AST.deallocTree(allocator, expected_tree);
     try std.testing.expect(stmt);
 }
